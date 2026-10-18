@@ -9,9 +9,13 @@
   },
   "dependencies": {
     "@livekit/components-react": "^2.9.16",
+    "@livekit/krisp-noise-filter": "^0.4.5",
+    "@ricky0123/vad-web": "^0.0.31",
+    "@sapphi-red/web-noise-suppressor": "^0.4.1",
     "livekit-client": "^2.15.7",
     "livekit-server-sdk": "^2.13.2",
     "next": "^15.0.0",
+    "onnxruntime-web": "^1.30.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

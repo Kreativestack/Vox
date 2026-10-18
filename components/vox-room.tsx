@@ -10,12 +10,11 @@ import {
 import {
   AudioPresets,
   ConnectionState,
-  LocalAudioTrack,
   Participant,
   Room,
   RoomEvent,
-  createLocalAudioTrack,
 } from "livekit-client";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import {
@@ -44,6 +43,11 @@ import type {
 } from "@/lib/types";
 import { VoxWordmark } from "@/components/vox-wordmark";
 
+const HostStudioControls = dynamic(
+  () => import("@/components/host-studio-controls").then((module) => module.HostStudioControls),
+  { ssr: false },
+);
+
 export type RoomSession = {
   token: string;
   livekitUrl: string;
@@ -63,52 +67,12 @@ type FloatingReaction = ReactionEvent & {
   lane: number;
 };
 
-const AUDIO_QUALITY_OPTIONS = [
-  {
-    value: "data_saver",
-    label: "Data saver (24 kbps)",
-    helper: "Best for weaker mobile data connections.",
-    preset: AudioPresets.speech,
-  },
-  {
-    value: "balanced",
-    label: "Balanced (48 kbps)",
-    helper: "Recommended for speech, worship music, and most live sessions.",
-    preset: AudioPresets.music,
-  },
-  {
-    value: "fuller_sound",
-    label: "Fuller sound (64 kbps stereo)",
-    helper: "Uses more data for a richer mixer feed.",
-    preset: AudioPresets.musicStereo,
-  },
-] as const;
-
-type AudioQualityOption = (typeof AUDIO_QUALITY_OPTIONS)[number];
-type AudioQualityValue = AudioQualityOption["value"];
-
-function getAudioQualityOption(value: AudioQualityValue) {
-  return (
-    AUDIO_QUALITY_OPTIONS.find((option) => option.value === value) ?? AUDIO_QUALITY_OPTIONS[1]
-  );
-}
-
 function appendUniqueMessage(list: ChatMessage[], message: ChatMessage) {
   if (list.some((item) => item.id === message.id)) {
     return list;
   }
 
   return [...list, message].slice(-200);
-}
-
-function buildAudioCaptureOptions(deviceId: string | undefined, musicMode: boolean) {
-  return {
-    deviceId: deviceId ? { exact: deviceId } : undefined,
-    echoCancellation: !musicMode,
-    noiseSuppression: !musicMode,
-    autoGainControl: !musicMode,
-    channelCount: musicMode ? 2 : 1,
-  };
 }
 
 function formatClock(sentAt: number) {
@@ -666,7 +630,7 @@ function VoxRoomInner({
             )}
 
             {mode === "host" && hostPasscode && (
-              <HostControls
+              <HostStudioControls
                 hasComments={messages.length > 0}
                 liveElapsedLabel={liveElapsedLabel}
                 hostPasscode={hostPasscode}
@@ -806,377 +770,5 @@ function VoxRoomInner({
         </div>
       </div>
     </div>
-  );
-}
-
-function HostControls({
-  hasComments,
-  liveElapsedLabel,
-  hostPasscode,
-  listenerCount,
-  publishEvent,
-  room,
-  setBroadcastState,
-  setRoomNotice,
-}: {
-  hasComments: boolean;
-  liveElapsedLabel: string | null;
-  hostPasscode: string;
-  listenerCount: number;
-  publishEvent: (event: VoxEvent, reliable: boolean) => Promise<void>;
-  room: Room;
-  setBroadcastState: (state: RoomBroadcastState) => void;
-  setRoomNotice: (message: string | null) => void;
-}) {
-  const trackRef = useRef<LocalAudioTrack | null>(null);
-  const [musicMode, setMusicMode] = useState(true);
-  const [audioQuality, setAudioQuality] = useState<AudioQualityValue>("balanced");
-  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDeviceId, setSelectedDeviceId] = useState("");
-  const [hostBusy, setHostBusy] = useState(false);
-  const [isLive, setIsLive] = useState(false);
-  const selectedQualityOption = getAudioQualityOption(audioQuality);
-  const selectedInputName =
-    devices.find((device) => device.deviceId === selectedDeviceId)?.label ||
-    (devices.length > 0 ? "Ready to choose" : "Waiting for microphone access");
-
-  const refreshDevices = useCallback(async () => {
-    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
-      return;
-    }
-
-    const nextDevices = (await navigator.mediaDevices.enumerateDevices()).filter(
-      (device) => device.kind === "audioinput",
-    );
-    setDevices(nextDevices);
-    setSelectedDeviceId((current) => current || nextDevices[0]?.deviceId || "");
-  }, []);
-
-  useEffect(() => {
-    const setup = async () => {
-      if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-        return;
-      }
-
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
-      } catch {
-        setRoomNotice("Mic permission is needed before you can pick an input and go live.");
-      }
-
-      await refreshDevices();
-    };
-
-    void setup();
-
-    const mediaDevices = navigator.mediaDevices;
-    const onDeviceChange = () => {
-      void refreshDevices();
-    };
-
-    mediaDevices?.addEventListener?.("devicechange", onDeviceChange);
-    return () => {
-      mediaDevices?.removeEventListener?.("devicechange", onDeviceChange);
-      trackRef.current?.stop();
-    };
-  }, [refreshDevices, setRoomNotice]);
-
-  const applyTrackSettings = useCallback(
-    async (deviceId: string, nextMusicMode: boolean) => {
-      if (!trackRef.current) {
-        return;
-      }
-
-      await trackRef.current.restartTrack(buildAudioCaptureOptions(deviceId, nextMusicMode));
-    },
-    [],
-  );
-
-  const broadcastStatus = useCallback(
-    async (status: "live" | "paused") => {
-      await publishEvent(
-        {
-          type: "status",
-          id: crypto.randomUUID(),
-          sentAt: Date.now(),
-          status,
-        },
-        true,
-      );
-    },
-    [publishEvent],
-  );
-
-  const republishTrackWithQuality = useCallback(
-    async (quality: AudioQualityValue) => {
-      if (!trackRef.current) {
-        return;
-      }
-
-      await room.localParticipant.unpublishTrack(trackRef.current, false);
-      await room.localParticipant.publishTrack(trackRef.current, {
-        audioPreset: getAudioQualityOption(quality).preset,
-      });
-    },
-    [room.localParticipant],
-  );
-
-  const syncBroadcastState = useCallback(
-    async (status: RoomBroadcastState["status"], liveStartedAt: number | null) => {
-      const response = await fetch("/api/broadcast-state", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          passcode: hostPasscode,
-          status,
-          liveStartedAt,
-        }),
-      });
-
-      const payload = (await response.json()) as {
-        error?: string;
-        state?: RoomBroadcastState;
-      };
-
-      if (!response.ok || !payload.state) {
-        throw new Error(payload.error || "Unable to update live timer.");
-      }
-
-      setBroadcastState(payload.state);
-    },
-    [hostPasscode, setBroadcastState],
-  );
-
-  const handleToggleLive = useCallback(async () => {
-    setHostBusy(true);
-    setRoomNotice(null);
-
-    try {
-      const deviceId = selectedDeviceId || devices[0]?.deviceId || "";
-      if (!trackRef.current) {
-        trackRef.current = await createLocalAudioTrack(buildAudioCaptureOptions(deviceId, musicMode));
-      }
-
-      if (isLive) {
-        await room.localParticipant.unpublishTrack(trackRef.current, false);
-        setIsLive(false);
-        await broadcastStatus("paused");
-        await syncBroadcastState("paused", null);
-      } else {
-        const startedAt = Date.now();
-        await applyTrackSettings(deviceId, musicMode);
-        await room.localParticipant.publishTrack(trackRef.current, {
-          audioPreset: selectedQualityOption.preset,
-        });
-        setIsLive(true);
-        await broadcastStatus("live");
-        await syncBroadcastState("live", startedAt);
-      }
-    } catch (error) {
-      setRoomNotice(error instanceof Error ? error.message : "Broadcast update failed.");
-    } finally {
-      setHostBusy(false);
-    }
-  }, [
-    applyTrackSettings,
-    broadcastStatus,
-    devices,
-    isLive,
-    musicMode,
-    room.localParticipant,
-    selectedQualityOption,
-    selectedDeviceId,
-    setRoomNotice,
-    syncBroadcastState,
-  ]);
-
-  const handleSelectDevice = useCallback(
-    async (deviceId: string) => {
-      setSelectedDeviceId(deviceId);
-      if (!isLive || !trackRef.current) {
-        return;
-      }
-
-      setHostBusy(true);
-      try {
-        await applyTrackSettings(deviceId, musicMode);
-      } catch (error) {
-        setRoomNotice(error instanceof Error ? error.message : "Could not switch input.");
-      } finally {
-        setHostBusy(false);
-      }
-    },
-    [applyTrackSettings, isLive, musicMode, setRoomNotice],
-  );
-
-  const handleToggleMusicMode = useCallback(async () => {
-    const nextValue = !musicMode;
-    setMusicMode(nextValue);
-    if (!isLive || !trackRef.current) {
-      return;
-    }
-
-    setHostBusy(true);
-    try {
-      await applyTrackSettings(selectedDeviceId, nextValue);
-    } catch (error) {
-      setRoomNotice(error instanceof Error ? error.message : "Could not update music mode.");
-    } finally {
-      setHostBusy(false);
-    }
-  }, [applyTrackSettings, isLive, musicMode, selectedDeviceId, setRoomNotice]);
-
-  const handleSelectQuality = useCallback(
-    async (quality: AudioQualityValue) => {
-      setAudioQuality(quality);
-      if (!isLive || !trackRef.current) {
-        return;
-      }
-
-      setHostBusy(true);
-      try {
-        await republishTrackWithQuality(quality);
-        setRoomNotice("Audio quality updated for the live broadcast.");
-      } catch (error) {
-        setRoomNotice(error instanceof Error ? error.message : "Could not update audio quality.");
-      } finally {
-        setHostBusy(false);
-      }
-    },
-    [isLive, republishTrackWithQuality, setRoomNotice],
-  );
-
-  return (
-    <section className="vox-host-panel">
-      <div className="vox-host-panel__header">
-        <div>
-          <h3>Broadcast controls</h3>
-          <p className="vox-helper">
-            Music mode keeps worship music and mixer output sounding natural.
-          </p>
-        </div>
-        <button
-          className={isLive ? "vox-button-danger" : "vox-button"}
-          disabled={hostBusy}
-          type="button"
-          onClick={() => void handleToggleLive()}
-        >
-          {hostBusy ? "Working..." : isLive ? "Pause broadcast" : "Go live"}
-        </button>
-      </div>
-
-      <div className="vox-host-monitor">
-        <div className="vox-host-monitor__item">
-          <span className="vox-helper">Status</span>
-          <strong className="vox-host-monitor__value">{isLive ? "Live now" : "Standing by"}</strong>
-        </div>
-        <div className="vox-host-monitor__item">
-          <span className="vox-helper">Input</span>
-          <strong className="vox-host-monitor__value" title={selectedInputName}>
-            {selectedInputName}
-          </strong>
-        </div>
-        <div className="vox-host-monitor__item">
-          <span className="vox-helper">Quality</span>
-          <strong className="vox-host-monitor__value">{selectedQualityOption.label}</strong>
-        </div>
-        <div className="vox-host-monitor__item">
-          <span className="vox-helper">Music mode</span>
-          <strong className="vox-host-monitor__value">{musicMode ? "On" : "Off"}</strong>
-        </div>
-        <div className="vox-host-monitor__item">
-          <span className="vox-helper">Live timer</span>
-          <strong className="vox-host-monitor__value">{liveElapsedLabel ?? "00:00"}</strong>
-        </div>
-      </div>
-
-      <div className="vox-host-checklist">
-        <div className="vox-host-checklist__header">
-          <h4>Quick host check</h4>
-          <span className="vox-helper">A calm 30-second setup pass before or during the programme.</span>
-        </div>
-        <ul className="vox-host-checklist__list">
-          <li data-ready={devices.length > 0}>
-            <span aria-hidden="true">{devices.length > 0 ? "✓" : "○"}</span>
-            Mic connected and visible
-          </li>
-          <li data-ready={Boolean(selectedDeviceId)}>
-            <span aria-hidden="true">{selectedDeviceId ? "✓" : "○"}</span>
-            Correct input selected
-          </li>
-          <li data-ready={hasComments}>
-            <span aria-hidden="true">{hasComments ? "✓" : "○"}</span>
-            Test comment seen in room chat
-          </li>
-          <li data-ready={listenerCount > 0}>
-            <span aria-hidden="true">{listenerCount > 0 ? "✓" : "○"}</span>
-            A listener device is connected
-          </li>
-        </ul>
-      </div>
-
-      <div className="vox-host-panel__grid">
-        <label className="vox-label" htmlFor="vox-audio-input">
-          Audio input
-          <select
-            id="vox-audio-input"
-            className="vox-select"
-            value={selectedDeviceId}
-            onChange={(event) => void handleSelectDevice(event.target.value)}
-          >
-            {devices.length === 0 ? (
-              <option value="">No inputs found yet</option>
-            ) : (
-              devices.map((device, index) => (
-                <option key={device.deviceId || `device-${index}`} value={device.deviceId}>
-                  {device.label || `Input ${index + 1}`}
-                </option>
-              ))
-            )}
-          </select>
-        </label>
-
-        <label className="vox-label" htmlFor="vox-audio-quality">
-          Stream quality
-          <select
-            id="vox-audio-quality"
-            className="vox-select"
-            value={audioQuality}
-            onChange={(event) => void handleSelectQuality(event.target.value as AudioQualityValue)}
-          >
-            {AUDIO_QUALITY_OPTIONS.map((option) => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <span className="vox-helper">{selectedQualityOption.helper}</span>
-        </label>
-
-        <label className="vox-toggle">
-          <span>
-            <strong>Music mode</strong>
-            <small>On by default for mixer feeds, singing, and instruments.</small>
-          </span>
-          <button
-            aria-pressed={musicMode}
-            className="vox-toggle__switch"
-            data-on={musicMode}
-            type="button"
-            onClick={() => void handleToggleMusicMode()}
-          >
-            <span />
-          </button>
-        </label>
-      </div>
-
-      <p className="vox-helper">
-        Balanced quality is the default. Changing quality while live may cause a brief audio shift.
-      </p>
-      <p className="vox-helper">Only the host can remove disruptive listeners.</p>
-    </section>
   );
 }

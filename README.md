@@ -77,6 +77,56 @@ Then open:
 - Listener view: `http://localhost:3000`
 - Host view: `http://localhost:3000/host`
 
+## Host studio mixer and audio interfaces
+
+Vox now includes a host-only mixer panel in `/host` with device switching, channel strips, metering, loudness readout, sound check tools, and a single processed LiveKit track for listeners.
+
+### Connecting a mixer or audio interface
+
+1. Plug in the USB microphone, mixer, sound desk, or audio interface before opening `/host` when possible.
+2. In the host studio, tap `Enable studio audio` and allow microphone access in the browser.
+3. Choose the device from `Main input`.
+4. If the interface sends the church mix on only one side, change the channel mode to `Left only` or `Right only`.
+5. Speak or play programme audio during `Sound check` until the meter stays in green and the loudness status reads `Good`.
+6. Use headphones before turning on `Headphone monitoring` so the host hears the same processed mix without feedback.
+
+### Recommended presets
+
+- `Laptop mic`
+  - Best for a built-in laptop microphone or simple USB headset.
+  - Turns off Music Mode, adds stronger speech processing, and enables RNNoise by default.
+- `Mixer / Sound desk feed`
+  - Best for a USB mixer or an audio interface connected to the church desk.
+  - Keeps Music Mode on and leaves voice cleanup off so singing and instruments stay natural.
+- `Podcast mic`
+  - Best for a dedicated spoken-word microphone.
+  - Uses speech compression and RNNoise for a tighter, cleaner vocal sound.
+- `Worship music`
+  - Best for full worship sessions, backing tracks, instruments, and choir-heavy feeds.
+  - Keeps Music Mode on, leaves cleanup off, and uses gentler compression.
+
+### Troubleshooting
+
+- `Device not showing`
+  - Tap `Refresh devices`.
+  - Confirm the browser has microphone permission.
+  - Reconnect the USB cable or interface power and wait a moment for the list to refresh.
+- `Permission denied`
+  - Use the browser address bar to allow microphone access for the site, then refresh devices.
+  - In Chrome or Edge, reopen `/host` after granting permission if labels still look blank.
+- `Echo or feedback`
+  - Turn `Headphone monitoring` off unless the host is wearing headphones.
+  - Use `Laptop mic` only for built-in microphones; use `Mixer / Sound desk feed` or `Worship music` for church desk feeds.
+  - Keep speakers away from open microphones.
+- `Audio too quiet`
+  - Raise the channel gain a little and confirm the meter reaches green during sound check.
+  - Check whether the interface feed is only on the left or right channel and select the matching channel mode.
+  - Aim for the loudness status to read `Good`, around `-16 LUFS`.
+- `Audio distorted or clipping`
+  - Lower the channel gain first, then the master fader if needed.
+  - Watch the clip light and true-peak readout in the master strip.
+  - If the church mixer is already clipping before it reaches Vox, lower the send from the physical mixer.
+
 ## Deploy to Vercel
 
 1. Push this project to GitHub.
